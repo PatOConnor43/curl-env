@@ -17,23 +17,16 @@ enum Commands {
         /// Path to the OpenAPI specification file
         #[arg(short, long, value_name = "FILE")]
         spec: PathBuf,
-
-        /// Optional prefix added to paths in the OpenAPI specification
-        ///
-        /// This is helpful when the OpenAPI spec is not at the root of the host. This prefix MUST
-        /// start with a slash and not end with a slash.
-        #[arg(short, long)]
-        path_prefix: Option<String>,
     },
 }
 
 fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
     match args.command {
-        Commands::Complete { spec, path_prefix } => complete(spec, path_prefix),
+        Commands::Complete { spec } => complete(spec),
     }
 }
-fn complete(spec_path: PathBuf, path_prefix: Option<String>) -> Result<(), anyhow::Error> {
+fn complete(spec_path: PathBuf) -> Result<(), anyhow::Error> {
     if !spec_path.exists() {
         return Err(anyhow::anyhow!("Spec file does not exist"));
     }
@@ -227,14 +220,11 @@ fn complete(spec_path: PathBuf, path_prefix: Option<String>) -> Result<(), anyho
     write!(
         file,
         "#
-source $HOME/.zshrc
-
 autoload -U is-at-least
-#autoload -U compinit
-#compinit
+autoload -U compinit
+compinit
 
-
-_custom_curl() {{
+_custom_curl_env() {{
     typeset -A opt_args
     typeset -a _arguments_options
     local ret=1
@@ -275,20 +265,14 @@ _custom_curl() {{
     
     case $state in
         urls)
-            local -a my_urls
-            my_urls=(
+            local -a url_options
+            url_options=(
             {urls}
             )
-            _describe -t urls \"URLs\" my_urls && ret=0
+            _describe -t urls \"URLs\" url_options && ret=0
             ;;
         headers)
             local -a header_options
-            if [[ $current_url =~ http://localhost:9000/platform/v1/documents/[[:alnum:]_-]+$ ]]; then
-                header_options=(
-                    'Authorization\\:Bearer'
-                )
-            fi
-
             _describe -t headers \"Headers\" header_options && ret=0
             ;;
         queries)
@@ -319,7 +303,6 @@ _custom_curl() {{
             ;;
         bodies)
             local -a body_options descriptions
-
             {body_options}
 
             # Check if we're at the beginning of completion or continuing
@@ -346,23 +329,17 @@ _custom_curl() {{
             fi
             ;;
     esac
-    
     return ret
 
 }}
 
 
-if [ \"$funcstack[1]\" = \"_custom_curl\" ]; then
-    _custom_curl \"$@\"
+if [ \"$funcstack[1]\" = \"_custom_curl_env\" ]; then
+    _custom_curl_env \"$@\"
 else
-    compdef _custom_curl curl
+    compdef _custom_curl_env curl
 fi
 
-zstyle-list-patterns () {{
-  local tmp
-  zstyle -g tmp
-  print -rl -- \"${{(@o)tmp}}\"
-}}
 ",
         urls = complete_urls.join("\n"),
         query_options = query_options_vec.join("\n"),
