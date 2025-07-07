@@ -84,9 +84,9 @@ fn complete(spec_path: PathBuf, path_prefix: Option<String>) -> Result<(), anyho
         });
 
         let options = query_parameter_names
-            .map(|name| format!(r#"'{}='"#, name))
+            .map(|name| format!(r#"$'\'{}=\''"#, name))
             .collect::<Vec<_>>()
-            .join("\n                      ");
+            .join(format!("\n{}", " ".repeat(18)).as_str());
         let mut replaced_path = path.to_string();
         while replaced_path.contains('{') {
             let start = replaced_path.find('{').unwrap();
@@ -96,11 +96,11 @@ fn complete(spec_path: PathBuf, path_prefix: Option<String>) -> Result<(), anyho
         replaced_path.push('$');
         query_options_vec.push(format!(
                 r#"
-                if [[ $current_url =~ http://localhost:9000{path} && $current_method == {method} ]]; then
-                    query_options=(
-                      {options}
-                    )
-                fi"#, path = replaced_path, method = method.to_uppercase(), options = options));
+            if [[ $current_url =~ http://localhost:9000{path} && $current_method == {method} ]]; then
+                query_options=(
+                  {options}
+                )
+            fi"#, path = replaced_path, method = method.to_uppercase(), options = options));
 
         match op.request_body.as_ref() {
             Some(body) => {
@@ -278,7 +278,27 @@ _custom_curl() {{
             local -a query_options
             {query_options}
 
-            compadd -X \"Query Parameters\" -- \"${{query_options[@]}}\" && ret=0
+            if [[ -z \"$PREFIX\" || \"$PREFIX\" = '$' || \"$PREFIX\" = \"$'\" ]]; then
+              # First tab press - show complete options
+              compstate[insert]=menu   # Force menu completion
+              compstate[list]=list     # Always show the list
+              compadd -Q -X \"Query Parameters\" -- \"${{query_options[@]}}\"
+            else
+              # Get the currently typed text and match complete options only
+              local current=\"$PREFIX$SUFFIX\"
+              local -a matches=()
+
+              for opt in \"${{query_options[@]}}\"; do
+                if [[ \"$opt\" = \"$current\"* ]]; then
+                  matches+=(\"$opt\")
+                fi
+              done
+
+              if (( ${{#matches}} > 0 )); then
+                compstate[insert]=all
+                compadd -Q -- \"${{matches[@]}}\"
+              fi
+            fi
             ;;
         bodies)
             local -a body_options descriptions
@@ -289,7 +309,7 @@ _custom_curl() {{
             if [[ -z \"$PREFIX\" || \"$PREFIX\" = '$' || \"$PREFIX\" = \"$'\" ]]; then
               # First tab press - show complete options
               compstate[insert]=menu   # Force menu completion
-              #compstate[list]=list     # Always show the list
+              compstate[list]=list     # Always show the list
               compadd -Q -X \"Request Body Examples\" -d descriptions -- \"${{body_options[@]}}\"
             else
               # Get the currently typed text and match complete options only
