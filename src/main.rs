@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use indexmap::IndexMap;
-use openapiv3::{Components, Parameter, ReferenceOr, RequestBody, Response, Schema};
+use openapiv3::{Components, Example, Parameter, ReferenceOr, RequestBody, Response, Schema};
 use std::{collections::BTreeMap, fs::File, io::Write, path::PathBuf, process::Command};
 
 /// A command line tool that processes OpenAPI specifications
@@ -69,6 +69,7 @@ fn complete(spec_path: PathBuf, path_prefix: Option<String>) -> Result<(), anyho
         })
         .collect::<Vec<_>>();
     let mut query_options_vec: Vec<String> = vec![];
+    let mut body_options_vec: Vec<String> = vec![];
     for (path, method, op) in spec.operations() {
         let parameters = parameter_map(&op.parameters, &spec.components);
         if parameters.is_err() {
@@ -90,19 +91,94 @@ fn complete(spec_path: PathBuf, path_prefix: Option<String>) -> Result<(), anyho
         while replaced_path.contains('{') {
             let start = replaced_path.find('{').unwrap();
             let end = replaced_path.find('}').unwrap();
-            replaced_path.replace_range(start..end + 1, r#"[[:alnum:]-]+"#);
+            replaced_path.replace_range(start..end + 1, r#"[[:alnum:]_-]+"#);
         }
         replaced_path.push('$');
         query_options_vec.push(format!(
                 r#"
                 if [[ $current_url =~ http://localhost:9000{path} && $current_method == {method} ]]; then
-                    raw_values=(
+                    query_options=(
                       {options}
                     )
-                fi
-            "#
-            ,path = replaced_path, method = method.to_uppercase(), options = options));
+                fi"#, path = replaced_path, method = method.to_uppercase(), options = options));
+
+        match op.request_body.as_ref() {
+            Some(body) => {
+                let body = body.item(&spec.components)?;
+                let content = body.content.get("application/json");
+                if content.is_none() {
+                    body_options_vec.push("".to_string());
+                    continue;
+                }
+                let content = content.unwrap();
+                if let Some(example) = &content.example {
+                    let example = serde_json::to_string(example)?;
+                    let example = example
+                        .replace(r#"'"#, r#"\'"#)
+                        .replace(r#":"#, r#"\:"#)
+                        .replace(r#"$"#, r#"\$"#)
+                        .replace(
+                            r#"
+"#, r#"\n"#,
+                        );
+                    body_options_vec.push(format!(
+                        r#"
+            if [[ $current_url =~ http://localhost:9000{path} && $current_method == {method} ]]; then
+              body_options=(
+                $'\$\'{example}\''
+              )
+
+              descriptions=(
+                'Request Body Example'
+              )
+            fi"#,
+                        path = replaced_path,
+                        method = method.to_uppercase()
+                    ));
+                    continue;
+                } else if !&content.examples.is_empty() {
+                    let mut body_examples = vec![];
+                    let mut body_example_descriptions = vec![];
+                    for (name, example) in &content.examples {
+                        let example = example.item(&spec.components)?;
+                        if let Some(value) = &example.value {
+                            let value = serde_json::to_string(value)?;
+                            let value = value
+                                .replace(r#"'"#, r#"\'"#)
+                                .replace(r#":"#, r#"\:"#)
+                                .replace(r#"$"#, r#"\$"#)
+                                .replace(
+                                    r#"
+"#, r#"\n"#,
+                                );
+                            body_examples.push(format!(r#"$'\$\'{value}\''"#));
+                            body_example_descriptions.push(format!(r#"'{}'"#, name));
+                        }
+                    }
+                    body_options_vec.push(format!(
+                        r#"
+            if [[ $current_url =~ http://localhost:9000{path} && $current_method == {method} ]]; then
+              body_options=(
+                {body_examples}
+              )
+              descriptions=(
+                {descriptions}
+              )
+            fi"#,
+                        path = replaced_path,
+                        method = method.to_uppercase(),
+                        body_examples = body_examples.join(format!("\n{}", " ".repeat(16)).as_str()),
+                        descriptions = body_example_descriptions.join(format!("\n{}", " ".repeat(16)).as_str())
+                    ));
+                }
+            }
+            None => body_options_vec.push("".to_string()),
+        }
     }
+    let body_options_vec: Vec<String> = body_options_vec
+        .into_iter()
+        .filter(|s| !s.trim().is_empty())
+        .collect();
 
     let xdg_dirs = xdg::BaseDirectories::with_prefix("curl-env");
     let data_dir = xdg_dirs.get_data_home().unwrap();
@@ -190,7 +266,7 @@ _custom_curl() {{
             ;;
         headers)
             local -a header_options
-            if [[ $current_url =~ http://localhost:9000/platform/v1/documents/[[:alnum:]-]+$ ]]; then
+            if [[ $current_url =~ http://localhost:9000/platform/v1/documents/[[:alnum:]_-]+$ ]]; then
                 header_options=(
                     'Authorization\\:Bearer'
                 )
@@ -199,20 +275,38 @@ _custom_curl() {{
             _describe -t headers \"Headers\" header_options && ret=0
             ;;
         queries)
-            local -a raw_values
+            local -a query_options
             {query_options}
-            
-            compadd -- \"${{raw_values[@]}}\" && ret=0
+
+            compadd -X \"Query Parameters\" -- \"${{query_options[@]}}\" && ret=0
             ;;
         bodies)
-            local -a body_options
-            if [[ $current_url =~ http://localhost:9000/platform/v1/documents$ && $current_method == \"POST\" ]]; then
-                body_options=(
-                  \"'{{\\\"name\\\"\\: \\\"\\\"}}'\"
-                )
-            fi
+            local -a body_options descriptions
 
-            _describe -t bodies \"Request Bodies\" body_options -Q && ret=0
+            {body_options}
+
+            # Check if we're at the beginning of completion or continuing
+            if [[ -z \"$PREFIX\" || \"$PREFIX\" = '$' || \"$PREFIX\" = \"$'\" ]]; then
+              # First tab press - show complete options
+              compstate[insert]=menu   # Force menu completion
+              #compstate[list]=list     # Always show the list
+              compadd -Q -X \"Request Body Examples\" -d descriptions -- \"${{body_options[@]}}\"
+            else
+              # Get the currently typed text and match complete options only
+              local current=\"$PREFIX$SUFFIX\"
+              local -a matches=()
+
+              for opt in \"${{body_options[@]}}\"; do
+                if [[ \"$opt\" = \"$current\"* ]]; then
+                  matches+=(\"$opt\")
+                fi
+              done
+
+              if (( ${{#matches}} > 0 )); then
+                compstate[insert]=all
+                compadd -Q -- \"${{matches[@]}}\"
+              fi
+            fi
             ;;
     esac
     
@@ -226,9 +320,16 @@ if [ \"$funcstack[1]\" = \"_custom_curl\" ]; then
 else
     compdef _custom_curl curl
 fi
+
+zstyle-list-patterns () {{
+  local tmp
+  zstyle -g tmp
+  print -rl -- \"${{(@o)tmp}}\"
+}}
 ",
         urls = complete_urls.join("\n"),
-        query_options = query_options_vec.join("\n")
+        query_options = query_options_vec.join("\n"),
+        body_options = body_options_vec.join("\n")
     )?;
     Command::new("zsh")
         .env("ZDOTDIR", data_dir.to_string_lossy().trim_end_matches('/'))
@@ -301,5 +402,11 @@ impl ComponentLookup for Response {
 impl ComponentLookup for Schema {
     fn get_components(components: &Components) -> &IndexMap<String, ReferenceOr<Self>> {
         &components.schemas
+    }
+}
+
+impl ComponentLookup for Example {
+    fn get_components(components: &Components) -> &IndexMap<String, ReferenceOr<Self>> {
+        &components.examples
     }
 }
