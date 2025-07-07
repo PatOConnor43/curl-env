@@ -69,7 +69,8 @@ fn complete(spec_path: PathBuf, path_prefix: Option<String>) -> Result<(), anyho
         })
         .collect::<Vec<_>>();
     let mut query_options_vec: Vec<String> = vec![];
-    let mut body_options_vec: Vec<String> = vec![];
+
+    // Collect query parameters
     for (path, method, op) in spec.operations() {
         let parameters = parameter_map(&op.parameters, &spec.components);
         if parameters.is_err() {
@@ -87,6 +88,11 @@ fn complete(spec_path: PathBuf, path_prefix: Option<String>) -> Result<(), anyho
             .map(|name| format!(r#"$'\'{}=\''"#, name))
             .collect::<Vec<_>>()
             .join(format!("\n{}", " ".repeat(18)).as_str());
+
+        if options.is_empty() {
+            continue;
+        }
+
         let mut replaced_path = path.to_string();
         while replaced_path.contains('{') {
             let start = replaced_path.find('{').unwrap();
@@ -101,7 +107,11 @@ fn complete(spec_path: PathBuf, path_prefix: Option<String>) -> Result<(), anyho
                   {options}
                 )
             fi"#, path = replaced_path, method = method.to_uppercase(), options = options));
+    }
 
+    let mut body_options_vec: Vec<String> = vec![];
+    // Collect request body examples
+    for (path, method, op) in spec.operations() {
         match op.request_body.as_ref() {
             Some(body) => {
                 let body = body.item(&spec.components)?;
@@ -111,6 +121,13 @@ fn complete(spec_path: PathBuf, path_prefix: Option<String>) -> Result<(), anyho
                     continue;
                 }
                 let content = content.unwrap();
+                let mut replaced_path = path.to_string();
+                while replaced_path.contains('{') {
+                    let start = replaced_path.find('{').unwrap();
+                    let end = replaced_path.find('}').unwrap();
+                    replaced_path.replace_range(start..end + 1, r#"[[:alnum:]_-]+"#);
+                }
+                replaced_path.push('$');
                 if let Some(example) = &content.example {
                     let example = serde_json::to_string(example)?;
                     let example = example
