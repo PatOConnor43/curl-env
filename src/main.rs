@@ -13,20 +13,32 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    Complete {
+    /// Activates a subshell environment where the curl completion script is active
+    Activate {
         /// Path to the OpenAPI specification file
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         spec: PathBuf,
+
+        /// URL where the server is mounted
+        ///
+        /// This should be any http or https url where the OpenAPI routes are mounted.
+        /// Examples:
+        /// - http://localhost:9000
+        /// - http://localhost:9000/api
+        /// - https://api.example.com/v1
+        /// - https://example.com/api/v2/
+        #[arg(long, verbatim_doc_comment)]
+        base_url: url::Url,
     },
 }
 
 fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
     match args.command {
-        Commands::Complete { spec } => complete(spec),
+        Commands::Activate { spec, base_url } => complete(spec, base_url),
     }
 }
-fn complete(spec_path: PathBuf) -> Result<(), anyhow::Error> {
+fn complete(spec_path: PathBuf, base_url: url::Url) -> Result<(), anyhow::Error> {
     if !spec_path.exists() {
         return Err(anyhow::anyhow!("Spec file does not exist"));
     }
@@ -51,14 +63,16 @@ fn complete(spec_path: PathBuf) -> Result<(), anyhow::Error> {
             .map_err(|e| anyhow::anyhow!("Failed to parse YAML OpenAPI spec: {}", e))
     };
     let spec = spec?;
+    let mut base_url = base_url;
+    base_url.set_query(None);
+
     let complete_urls = spec
         .paths
         .iter()
-        .map(|(path, _)| {
-            format!(r#"'http://localhost:9000{}'"#, path)
-                .replace(":", "\\:")
-                .replace("{", "")
-                .replace("}", "")
+        .filter_map(|(path, _)| {
+            let path = path.replace("{", "").replace("}", "");
+            let url = base_url.join(path.as_str()).ok()?;
+            Some(format!("'{}'", url.as_str()).replace(":", "\\:"))
         })
         .collect::<Vec<_>>();
     let mut query_options_vec: Vec<String> = vec![];
@@ -93,13 +107,23 @@ fn complete(spec_path: PathBuf) -> Result<(), anyhow::Error> {
             replaced_path.replace_range(start..end + 1, r#"[[:alnum:]_-]+"#);
         }
         replaced_path.push('$');
+        let url = base_url.join(replaced_path.as_str());
+        if url.is_err() {
+            continue;
+        }
+        let url = url.unwrap();
+
         query_options_vec.push(format!(
-                r#"
-            if [[ $current_url =~ http://localhost:9000{path} && $current_method == {method} ]]; then
+            r#"
+            if [[ $current_url =~ {url} && $current_method == {method} ]]; then
                 query_options=(
                   {options}
                 )
-            fi"#, path = replaced_path, method = method.to_uppercase(), options = options));
+            fi"#,
+            url = url,
+            method = method.to_uppercase(),
+            options = options
+        ));
     }
 
     let mut body_options_vec: Vec<String> = vec![];
@@ -131,9 +155,16 @@ fn complete(spec_path: PathBuf) -> Result<(), anyhow::Error> {
                             r#"
 "#, r#"\n"#,
                         );
+
+                    let url = base_url.join(replaced_path.as_str());
+                    if url.is_err() {
+                        continue;
+                    }
+                    let url = url.unwrap();
+
                     body_options_vec.push(format!(
                         r#"
-            if [[ $current_url =~ http://localhost:9000{path} && $current_method == {method} ]]; then
+            if [[ $current_url =~ {url} && $current_method == {method} ]]; then
               body_options=(
                 $'\$\'{example}\''
               )
@@ -142,7 +173,7 @@ fn complete(spec_path: PathBuf) -> Result<(), anyhow::Error> {
                 'Request Body Example'
               )
             fi"#,
-                        path = replaced_path,
+                        url = url,
                         method = method.to_uppercase()
                     ));
                     continue;
@@ -165,9 +196,16 @@ fn complete(spec_path: PathBuf) -> Result<(), anyhow::Error> {
                             body_example_descriptions.push(format!(r#"'{}'"#, name));
                         }
                     }
+
+                    let url = base_url.join(replaced_path.as_str());
+                    if url.is_err() {
+                        continue;
+                    }
+                    let url = url.unwrap();
+
                     body_options_vec.push(format!(
                         r#"
-            if [[ $current_url =~ http://localhost:9000{path} && $current_method == {method} ]]; then
+            if [[ $current_url =~ {url} && $current_method == {method} ]]; then
               body_options=(
                 {body_examples}
               )
@@ -175,10 +213,12 @@ fn complete(spec_path: PathBuf) -> Result<(), anyhow::Error> {
                 {descriptions}
               )
             fi"#,
-                        path = replaced_path,
+                        url = url,
                         method = method.to_uppercase(),
-                        body_examples = body_examples.join(format!("\n{}", " ".repeat(16)).as_str()),
-                        descriptions = body_example_descriptions.join(format!("\n{}", " ".repeat(16)).as_str())
+                        body_examples =
+                            body_examples.join(format!("\n{}", " ".repeat(16)).as_str()),
+                        descriptions = body_example_descriptions
+                            .join(format!("\n{}", " ".repeat(16)).as_str())
                     ));
                 }
             }
@@ -341,7 +381,7 @@ else
 fi
 
 ",
-        urls = complete_urls.join("\n"),
+        urls = complete_urls.join(format!("\n{}", " ".repeat(12)).as_str()),
         query_options = query_options_vec.join("\n"),
         body_options = body_options_vec.join("\n")
     )?;
