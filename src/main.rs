@@ -29,6 +29,7 @@ enum Commands {
         /// - https://api.example.com/v1
         /// - https://example.com/api/v2/
         #[arg(long, verbatim_doc_comment)]
+        #[allow(rustdoc::bare_urls)]
         base_url: url::Url,
 
         /// Shell type to activate
@@ -50,6 +51,7 @@ enum Commands {
         /// - https://api.example.com/v1
         /// - https://example.com/api/v2/
         #[arg(long, verbatim_doc_comment)]
+        #[allow(rustdoc::bare_urls)]
         base_url: url::Url,
 
         /// Shell type to generate completion for
