@@ -85,3 +85,16 @@ install cargo-insta`. Once this is installed, changes can be reviewed with
 `cargo insta test --review`.
 
 If you're just trying to run the tests you can run `cargo test`.
+
+### Cargo dist
+This project uses `cargo dist` to build a distributable binary. Specifically this project uses the fork maintained by [astral-sh](https://github.com/astral-sh/cargo-dist). To install it, go to the releases page and install the binary.
+
+Updating `dist` can be done with `dist selfupdate`.
+
+### Releasing
+In order to tag a new release, follow these steps:
+- Checkout master
+- Add a changelog for the version to `RELEASES.md`
+- Commit the changes
+- Run `cargo release patch --no-publish` to dry run the release (minor or major can be used as well)
+- Run `cargo release patch --no-publish --execute` to actually tag the release
