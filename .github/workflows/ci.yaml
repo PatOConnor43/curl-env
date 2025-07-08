@@ -8,8 +8,8 @@ on:
   # Every push to...
   push:
     branches:
-      # The main branch
-      - main
+      # The master branch
+      - master
 
   # We want all these checks to fail if they spit out warnings
 env:
@@ -64,4 +64,3 @@ jobs:
       - run: cargo test
         env:
           PWD: ${{ env.GITHUB_WORKSPACE }}
-
