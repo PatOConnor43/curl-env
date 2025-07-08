@@ -1,9 +1,10 @@
+use anyhow::Context;
 use clap::{Parser, Subcommand};
 use indexmap::IndexMap;
 use openapiv3::{Components, Example, Parameter, ReferenceOr, RequestBody, Response, Schema};
 use std::{collections::BTreeMap, fs::File, io::Write, path::PathBuf, process::Command};
 
-/// A command line tool that processes OpenAPI specifications
+/// A command line tool that autocompletes curl commands based on an OpenAPI specification
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -29,20 +30,113 @@ enum Commands {
         /// - https://example.com/api/v2/
         #[arg(long, verbatim_doc_comment)]
         base_url: url::Url,
+
+        /// Shell type to activate
+        #[arg(value_enum, default_value_t = Shell::Zsh)]
+        shell: Shell,
     },
+    /// Generate shell completion scripts
+    Completion {
+        /// Path to the OpenAPI specification file
+        #[arg(long, value_name = "FILE")]
+        spec: PathBuf,
+
+        /// URL where the server is mounted
+        ///
+        /// This should be any http or https url where the OpenAPI routes are mounted.
+        /// Examples:
+        /// - http://localhost:9000
+        /// - http://localhost:9000/api
+        /// - https://api.example.com/v1
+        /// - https://example.com/api/v2/
+        #[arg(long, verbatim_doc_comment)]
+        base_url: url::Url,
+
+        /// Shell type to generate completion for
+        #[arg(value_enum, default_value_t = Shell::Zsh)]
+        shell: Shell,
+    },
+}
+
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum Shell {
+    Zsh,
 }
 
 fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
     match args.command {
-        Commands::Activate { spec, base_url } => complete(spec, base_url),
+        Commands::Activate {
+            spec,
+            base_url,
+            shell,
+        } => {
+            let spec = read_spec_from_path(&spec)?;
+            match shell {
+                Shell::Zsh => {
+                    let zsh_content = get_zsh_content(spec, base_url)?;
+                    let zsh_path = get_zsh_path()?;
+                    let mut file = File::options()
+                        .truncate(true)
+                        .write(true)
+                        .open(&zsh_path)
+                        .context("Failed to open .zshrc file")?;
+                    file.write_all(zsh_content.as_bytes())
+                        .context("Failed to write to .zshrc")?;
+                    Command::new("zsh")
+                        .env("ZDOTDIR", zsh_path.parent().unwrap())
+                        .status()
+                        .context("Failed to execute zsh")?;
+                }
+            }
+
+            Ok(())
+        }
+        Commands::Completion {
+            shell,
+            spec,
+            base_url,
+        } => {
+            let spec = read_spec_from_path(&spec)?;
+            match shell {
+                Shell::Zsh => {
+                    let content = get_zsh_content(spec, base_url)?;
+                    println!("{}", content);
+                    Ok(())
+                }
+            }
+        }
     }
 }
-fn complete(spec_path: PathBuf, base_url: url::Url) -> Result<(), anyhow::Error> {
+
+fn get_zsh_path() -> Result<PathBuf, anyhow::Error> {
+    let xdg_dirs = xdg::BaseDirectories::with_prefix("curl-env");
+    let current_zshrc = xdg_dirs.get_data_file(".zshrc");
+    match current_zshrc {
+        None => {
+            let path = xdg_dirs
+                .place_data_file(".zshrc")
+                .expect("Failed to get .zshrc file path");
+            File::create(path.clone()).expect("Failed to create .zshrc file");
+            Ok(path)
+        }
+        Some(path) => {
+            if !path.exists() {
+                let path = xdg_dirs
+                    .place_data_file(".zshrc")
+                    .expect("Failed to get .zshrc file path");
+                File::create(path.clone()).expect("Failed to create .zshrc file");
+            }
+            Ok(path)
+        }
+    }
+}
+
+fn read_spec_from_path(spec_path: &PathBuf) -> Result<openapiv3::OpenAPI, anyhow::Error> {
     if !spec_path.exists() {
         return Err(anyhow::anyhow!("Spec file does not exist"));
     }
-    let spec_content = std::fs::read_to_string(&spec_path);
+    let spec_content = std::fs::read_to_string(spec_path);
     if let Err(e) = spec_content {
         return Err(anyhow::anyhow!(
             "Error: Failed to read specification file: {}",
@@ -63,6 +157,10 @@ fn complete(spec_path: PathBuf, base_url: url::Url) -> Result<(), anyhow::Error>
             .map_err(|e| anyhow::anyhow!("Failed to parse YAML OpenAPI spec: {}", e))
     };
     let spec = spec?;
+    Ok(spec)
+}
+
+fn get_zsh_content(spec: openapiv3::OpenAPI, base_url: url::Url) -> Result<String, anyhow::Error> {
     let mut base_url = base_url;
     base_url.set_query(None);
 
@@ -230,35 +328,7 @@ fn complete(spec_path: PathBuf, base_url: url::Url) -> Result<(), anyhow::Error>
         .filter(|s| !s.trim().is_empty())
         .collect();
 
-    let xdg_dirs = xdg::BaseDirectories::with_prefix("curl-env");
-    let data_dir = xdg_dirs.get_data_home().unwrap();
-    let current_zshrc = xdg_dirs.get_data_file(".zshrc");
-    let current_zshrc = match current_zshrc {
-        None => {
-            let path = xdg_dirs
-                .place_data_file(".zshrc")
-                .expect("Failed to get .zshrc file path");
-            File::create(path.clone()).expect("Failed to create .zshrc file");
-            path
-        }
-        Some(path) => {
-            if !path.exists() {
-                let path = xdg_dirs
-                    .place_data_file(".zshrc")
-                    .expect("Failed to get .zshrc file path");
-                File::create(path.clone()).expect("Failed to create .zshrc file");
-            }
-            path
-        }
-    };
-
-    let mut file = File::options()
-        .truncate(true)
-        .write(true)
-        .open(current_zshrc)
-        .expect("Failed to open .zshrc file");
-    write!(
-        file,
+    let zsh_content = format!(
         "#
 autoload -U is-at-least
 autoload -U compinit
@@ -384,13 +454,9 @@ fi
         urls = complete_urls.join(format!("\n{}", " ".repeat(12)).as_str()),
         query_options = query_options_vec.join("\n"),
         body_options = body_options_vec.join("\n")
-    )?;
-    Command::new("zsh")
-        .env("ZDOTDIR", data_dir.to_string_lossy().trim_end_matches('/'))
-        .status()
-        .expect("Failed to execute zsh");
+    );
 
-    Ok(())
+    Ok(zsh_content)
 }
 
 pub(crate) trait ReferenceOrExt<T: ComponentLookup> {
