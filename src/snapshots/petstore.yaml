@@ -53,12 +53,6 @@ paths:
         responses:
           '201':
             description: Null response
-          default:
-            description: unexpected error
-            content:
-              application/json:
-                schema:
-                  $ref: "#/components/schemas/Error"
   /pets/{petId}:
     get:
       summary: Info for a specific pet
@@ -79,6 +73,136 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Pet"
+        default:
+          description: unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      summary: Update a specific pet
+      operationId: updatePet
+      tags:
+        - pets
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          description: The id of the pet to update
+          schema:
+            type: string
+        - name: update_fields
+          in: query
+          required: false
+          description: Comma-separated list of fields to update
+          schema:
+            type: string
+        - name: notify_owner
+          in: query
+          required: false
+          description: Whether to notify the pet owner of the update
+          schema:
+            type: boolean
+      requestBody:
+        description: Pet object that needs to be updated
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Pet"
+      responses:
+        '200':
+          description: Pet updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pet"
+        default:
+          description: unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      summary: Partially update a pet
+      operationId: patchPet
+      tags:
+        - pets
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          description: The id of the pet to update
+          schema:
+            type: string
+      requestBody:
+        description: Pet fields to update
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                tag:
+                  type: string
+            example:
+              name: "Fluffy"
+              tag: "friendly"
+      responses:
+        '200':
+          description: Pet updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pet"
+        default:
+          description: unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      summary: Delete a pet
+      operationId: deletePet
+      tags:
+        - pets
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          description: The id of the pet to delete
+          schema:
+            type: string
+      requestBody:
+        description: Deletion options
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                permanent:
+                  type: boolean
+                  description: Whether to permanently delete the pet
+                reason:
+                  type: string
+                  description: Reason for deletion
+            examples:
+              soft_delete:
+                summary: Soft deletion
+                value:
+                  permanent: false
+                  reason: "Customer request"
+              permanent_delete:
+                summary: Permanent deletion
+                value:
+                  permanent: true
+                  reason: "Data cleanup"
+      responses:
+        '204':
+          description: Pet deleted successfully
         default:
           description: unexpected error
           content:

@@ -530,3 +530,18 @@ impl ComponentLookup for Example {
         &components.examples
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use insta::assert_snapshot;
+
+    #[test]
+    fn petstore_yaml() -> Result<(), Box<dyn std::error::Error>> {
+        let spec = read_spec_from_path(&PathBuf::from("src/snapshots/petstore.yaml"))?;
+        let base_url = url::Url::parse("https://petstore.swagger.io/v3")?;
+        let zsh_content = get_zsh_content(spec, base_url)?;
+        assert_snapshot!(zsh_content);
+        Ok(())
+    }
+}

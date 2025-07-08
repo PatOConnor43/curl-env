@@ -1,0 +1,147 @@
+---
+source: src/main.rs
+expression: zsh_content
+---
+#
+autoload -U is-at-least
+autoload -U compinit
+compinit
+
+_custom_curl_env() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    local current_url=""
+    local current_method="GET"
+
+
+    # Parse current command to extract URL and method
+    for ((i = 2; i <= CURRENT; i++)); do
+        if [[ ${words[i]} == -X || ${words[i]} == --request ]]; then
+            (( i++ ))
+            [[ $i -le CURRENT ]] && current_method=${words[i]}
+        elif [[ ${words[i]} != -* && ${words[i-1]} != -* ]]; then
+            # This might be the URL
+            [[ ${words[i]} == http* ]] && current_url=${words[i]}
+        fi
+    done
+
+    _arguments "${_arguments_options[@]}" '(-h --help)'{-h,--help}'[Display help]' '{-H,--header}'*'[Pass custom header]:header:->headers' '(-o --output)'{-o,--output}'[Write output to file]:output file:_files' '(-d --data)'{-d,--data}'[Pass request body]:body:->bodies' '(-X --request)'{-X,--request}'[Specify request method]:method:(GET POST PUT DELETE PATCH)' '*--data-urlencode[Specify query parameter]:query:->queries' '(-G --get)'{-G,--get}'[Append request body as query parameters]' '(-v --verbose)'{-v,--verbose}'[Verbose mode]' '*:URL:->urls' && ret=0
+    
+    case $state in
+        urls)
+            local -a url_options
+            url_options=(
+            'https\://petstore.swagger.io/pets'
+            'https\://petstore.swagger.io/pets/petId'
+            )
+            _describe -t urls "URLs" url_options && ret=0
+            ;;
+        headers)
+            local -a header_options
+            _describe -t headers "Headers" header_options && ret=0
+            ;;
+        queries)
+            local -a query_options
+            
+            if [[ $current_url =~ https://petstore.swagger.io/pets$ && $current_method == GET ]]; then
+                query_options=(
+                  $'\'limit=\''
+                )
+            fi
+
+            if [[ $current_url =~ https://petstore.swagger.io/pets/[[:alnum:]_-]+$ && $current_method == PUT ]]; then
+                query_options=(
+                  $'\'notify_owner=\''
+                  $'\'update_fields=\''
+                )
+            fi
+
+            if [[ -z "$PREFIX" || "$PREFIX" = '$' || "$PREFIX" = "$'" ]]; then
+              # First tab press - show complete options
+              compstate[insert]=menu   # Force menu completion
+              compstate[list]=list     # Always show the list
+              compadd -Q -X "Query Parameters" -- "${query_options[@]}"
+            else
+              # Get the currently typed text and match complete options only
+              local current="$PREFIX$SUFFIX"
+              local -a matches=()
+
+              for opt in "${query_options[@]}"; do
+                if [[ "$opt" = "$current"* ]]; then
+                  matches+=("$opt")
+                fi
+              done
+
+              if (( ${#matches} > 0 )); then
+                compstate[insert]=all
+                compadd -Q -- "${matches[@]}"
+              fi
+            fi
+            ;;
+        bodies)
+            local -a body_options descriptions
+            
+            if [[ $current_url =~ https://petstore.swagger.io/pets/[[:alnum:]_-]+$ && $current_method == DELETE ]]; then
+              body_options=(
+                $'\$\'{"permanent"\:false,"reason"\:"Customer request"}\''
+                $'\$\'{"permanent"\:true,"reason"\:"Data cleanup"}\''
+              )
+              descriptions=(
+                'soft_delete'
+                'permanent_delete'
+              )
+            fi
+
+            if [[ $current_url =~ https://petstore.swagger.io/pets/[[:alnum:]_-]+$ && $current_method == PATCH ]]; then
+              body_options=(
+                $'\$\'{"name"\:"Fluffy","tag"\:"friendly"}\''
+              )
+
+              descriptions=(
+                'Request Body Example'
+              )
+            fi
+
+            # Check if we're at the beginning of completion or continuing
+            if [[ -z "$PREFIX" || "$PREFIX" = '$' || "$PREFIX" = "$'" ]]; then
+              # First tab press - show complete options
+              compstate[insert]=menu   # Force menu completion
+              compstate[list]=list     # Always show the list
+              compadd -Q -X "Request Body Examples" -d descriptions -- "${body_options[@]}"
+            else
+              # Get the currently typed text and match complete options only
+              local current="$PREFIX$SUFFIX"
+              local -a matches=()
+
+              for opt in "${body_options[@]}"; do
+                if [[ "$opt" = "$current"* ]]; then
+                  matches+=("$opt")
+                fi
+              done
+
+              if (( ${#matches} > 0 )); then
+                compstate[insert]=all
+                compadd -Q -- "${matches[@]}"
+              fi
+            fi
+            ;;
+    esac
+    return ret
+
+}
+
+
+if [ "$funcstack[1]" = "_custom_curl_env" ]; then
+    _custom_curl_env "$@"
+else
+    compdef _custom_curl_env curl
+fi
